@@ -187,3 +187,11 @@ def send_cmd(cmd, param='', cam_address = G3_DUO_IP_ADDRESS):
     except Exception as e:
         print("Exception: ", e)
         return
+
+def test_speed(count, cmd=1001, par=''):
+    for i in range(count):
+        start = time.time()
+        send_cmd(cmd, par)
+        end = time.time()
+        res = end - start
+        print(res)
