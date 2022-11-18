@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
+import time
 import requests
 import urllib.request, urllib.parse, urllib.error
 import xml.etree.ElementTree as ET
 
-G3_DUO_IP_ADDRESS = "192.168.1.254"
+
 key_translate ={
-    '1001':{'cmd':'take photo', 'value_number':None},
-    '1002':{'cmd':'set photo size', 'value_number':2, '1':'12MP', '2':'8MP'},
-    '1003':{'cmd':'get freepic number', 'value_number':None},
+    '1001':{'cmd':'take photo'},
+    '1002':{'cmd':'set photo size', '1':'12MP', '2':'8MP'},
+    '1003':{'cmd':'get freepic number'},
     '2001':{'cmd':'2001'},
     '2002':{'cmd':'get video size',
                 '0': '2880x2160 24fps 16/9', 
@@ -100,55 +101,95 @@ key_translate ={
     '9409':{'cmd': 'quick capture', '0':'off', '1':'on'},
     '9410':{'cmd': 'enable GPS', '0':'off', '1':'on'},
     '9412':{'cmd': 'speed unit', '0':'mph', '1':'kmh'},
-    '9413':{'cmd': 'image rotation', '0':'off', '1':'180°', '2':'behind on???', '3':'on???'},
+    '9413':{'cmd': 'image rotation', '0':'off', '1':'180°', '2':'slave cam 180°', '3':'both cam 180°'},
     '9414':{'cmd': 'status led', '1':'all off', '2':'front off', '3':'side off', '4':'only front on', '5':'only back on'},
     '9415':{'cmd': 'external power', '0':'charge', '1':'power on', '2':'recording'},
     '9416':{'cmd': 'date format', '0':'year month day', '1':'month day year', '2':'day month year'},
 }
 
-def convert_to_human_keys_values(hard_to_read_dict, translate_table_dict):
-    human_dict = {}
-    for key in hard_to_read_dict:
+class cam_ctrl(object):
+
+    G3_DUO_IP_ADDRESS = "192.168.1.254"
+
+
+    def __init__(self, cam_ip=G3_DUO_IP_ADDRESS , name='G3 Duo'):
+        self.ip = cam_ip
+        self.name = name
+        self.api = key_translate
+        self.rev_api = self.reverse_dict(key_translate)
+
+    def reverse_dict(self, dict_to_reverse):
+        reverse = {}
+        for key, value in key_translate.items():
+            reverse[value['cmd']] = {sub_value:sub_key for sub_key, sub_value in value.items()}
+            reverse[value['cmd']].update({'cmd':key})
+            del(reverse[value['cmd']][value['cmd']])
+        return reverse
+
+    def convert_to_human_keys_values(self,hard_to_read_dict, translate_table_dict):
+        human_dict = {}
+        for key in hard_to_read_dict:
+            try:
+                if translate_table_dict.get(key) is not None:
+                    #human_dict[translate_table_dict[key]] = translate_table_dict[key][hard_to_read_dict[key]]
+                    new_key = translate_table_dict[key]['cmd']
+                    new_value = translate_table_dict[key].get(hard_to_read_dict[key], hard_to_read_dict[key])
+                    human_dict[new_key] = new_value
+                else:
+                    human_dict[key] = hard_to_read_dict[key]
+                
+            except Exception as e:
+                print('Exception: ', e)
+        return human_dict
+
+    def xml_to_dict(self, xml_string):
+
+        tree = ET.fromstring(xml_string)
+        Cam_dict = {}
+        for child in tree:
+            if child.tag == 'Cmd':
+                #Cam_dict[child.text] = ''
+                last_cmd = child.text
+            if child.tag == 'Status':
+                Cam_dict[last_cmd] = child.text
+                del last_cmd
+        return Cam_dict
+
+    def dict_diff(self, dict1, dict2):
+
+        #find the identical key in the two dicts
+        d_same_key = {key:dict2[key] for key in dict1 if key in dict2}
+        #find the keys with diffent values
+        diff_value = {key:d_same_key[key] for key in d_same_key if dict1[key] != d_same_key[key]}
+        #find keys in dict2 inexistant in dict1
+        new_keys = {key:dict2[key] for key in dict2 if key not in dict1}
+
+        result = {}
+        result['New_key'] = new_keys if len(new_keys) != 0 else None
+        result['New_value'] = diff_value if len(diff_value) !=0 else None
+
+        return result
+
+    def capture_mode(self, capture_mode):
+        """
+        mode photo, video, playback
+        """
         try:
-            if translate_table_dict.get(key) is not None:
-                #human_dict[translate_table_dict[key]] = translate_table_dict[key][hard_to_read_dict[key]]
-                new_key = translate_table_dict[key]['cmd']
-                new_value = translate_table_dict[key].get(hard_to_read_dict[key], hard_to_read_dict[key])
-                human_dict[new_key] = new_value
-            else:
-                human_dict[key] = hard_to_read_dict[key]
-            
+            self.send_cmd(self, self.rev_api['set mode'][capture_mode])
         except Exception as e:
-            print('Exception: ', e)
-    return human_dict
+            return e
 
-def xml_to_dict(xml_string):
 
-    tree = ET.fromstring(xml_string)
-    Cam_dict = {}
-    for child in tree:
-        if child.tag == 'Cmd':
-            #Cam_dict[child.text] = ''
-            last_cmd = child.text
-        if child.tag == 'Status':
-            Cam_dict[last_cmd] = child.text
-            del last_cmd
-    return Cam_dict
-
-def dict_diff(dict1, dict2):
-
-    #find the identical key in the two dicts
-    d_same_key = {key:dict2[key] for key in dict1 if key in dict2}
-    #find the keys with diffent values
-    diff_value = {key:d_same_key[key] for key in d_same_key if dict1[key] != d_same_key[key]}
-    #find keys in dict2 inexistant in dict1
-    new_keys = {key:dict2[key] for key in dict2 if key not in dict1}
-
-    result = {}
-    result['New_key'] = new_keys if len(new_keys) != 0 else None
-    result['New_value'] = diff_value if len(diff_value) !=0 else None
-
-    return result
+    def send_cmd(self, cmd, param=''):
+        
+        #tosend = 'http://' + cam_address + '/' + '?custom=1' + 'cmd='
+        param = "?par={0}".format(param) if param != '' else ''
+        tosend = "http://{0}/?custom=1&cmd={1}{2}".format(self.ip, cmd, param)
+        try:
+            r = requests.get(tosend)
+            return r.text
+        except Exception as e:
+            return e
 
 def diff_test1():
 
@@ -177,16 +218,7 @@ def diff_test1():
     result = dict_diff(dct1, dct2)
     assert result == {'New_key': {'9999': 9, '666': 'hell'}, 'New_value': {'2016': 1, '1002': 4}}, result
 
-def send_cmd(cmd, param='', cam_address = G3_DUO_IP_ADDRESS):
-    #tosend = 'http://' + cam_address + '/' + '?custom=1' + 'cmd='
-    param = "?par={0}".format(param) if param != '' else ''
-    tosend = "http://{0}/?custom=1&cmd={1}{2}".format(cam_address, cmd, param)
-    try:
-        r = requests.get(tosend)
-        return r.text
-    except Exception as e:
-        print("Exception: ", e)
-        return
+
 
 def test_speed(count, cmd=1001, par=''):
     for i in range(count):
